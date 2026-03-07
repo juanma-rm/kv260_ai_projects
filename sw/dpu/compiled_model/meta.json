@@ -1,0 +1,8 @@
+{
+    "lib": "libvart-dpu-runner.so",
+    "filename": "logic_net_dpu.xmodel",
+    "kernel": [
+        "subgraph_LogicNet__LogicNet_Sequential_net__Linear_0__ret_3(TransferMatMulToConv2d)"
+    ],
+    "target": "DPUCZDX8G_ISA1_B4096"
+}

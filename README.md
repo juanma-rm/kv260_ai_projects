@@ -32,19 +32,16 @@ See [README in main branch](https://github.com/juanma-rm/kv260_ai_projects/blob/
 
 # General setup
 
-For Windows PowerShell: enable execution policy:
-```PowerShell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
+## Development machine (workstation)
 
 Create and activate virtual environment:
-```
+```bash
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
 Install dependency modules:
-```
+```bash
 pip install torch
 pip install numpy
 pip install matplotlib
@@ -53,8 +50,8 @@ pip install onnx
 pip install onnxruntime
 ```
 
-Install Blackwell-ready PyTorch:
-```
+Install PyTorch:
+```bash
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
 
 # Verify Pytorch installation and GPU detection
@@ -65,7 +62,7 @@ CUDA available: True | Device: NVIDIA GeForce RTX 5070 Ti
 ```
 
 Install Jupyter and the IPyKernel bridge:
-```
+```bash
 pip install jupyter ipykernel
 
 # Add your venv as a selectable kernel in Jupyter
@@ -76,16 +73,107 @@ python -m ipykernel install --user --name=ai_fpga --display-name "Python (AI-FPG
 jupyter lab
 ```
 
-# Run standard
+Vitis AI (install, quantize, compile):
+```bash
+# Clone Vitis AI repository
+git clone https://github.com/Xilinx/Vitis-AI.git
+cd Vitis-AI
+
+# Pull and Run the Docker Image:
+# For CPU-only host
+./docker_run.sh xilinx/vitis-ai-pytorch-gpu:latest
+# For GPU-enabled host (recommended for faster quantization/training)
+./docker_run.sh xilinx/vitis-ai-pytorch-cpu:latest
+
+# Once inside the container, activate the PyTorch conda environment:
+vitis-ai-user@docker-desktop:/workspace$ conda activate vitis-ai-pytorch
+
+# Navigate to the DPU directory (ensure it is available from the container)
+(vitis-ai-pytorch) vitis-ai-user@docker-desktop:/workspace$ cd sw/dpu
+
+# Quantize
+(vitis-ai-pytorch) vitis-ai-user@docker-desktop:/workspace$ python quantize_model.py
+
+# Compile for KV260 DPU
+(vitis-ai-pytorch) vitis-ai-user@docker-desktop:/workspace$ vai_c_xir -x quantize_result/LogicNet_int.xmodel \
+          -a /opt/vitis_ai/compiler/arch/DPUCZDX8G/KV260/arch.json \
+          -o ./compiled_model \
+          -n logic_net_dpu
+```
+
+## KV260 board
+
+Install dependency modules:
+
+```bash
+pip install torch
+pip install numpy
+pip install matplotlib
+pip install seaborn
+pip install onnx
+pip install onnxruntime
+```
+
+Install PYNQ framework:
+
+```bash
+git clone https://github.com/Xilinx/Kria-PYNQ.git
+cd Kria-PYNQ/
+sudo bash install.sh -b KV260
+```
+
+# Usage
+
+## Standard
 
 ```
 cd sw\standard
+
 # Train:
 # Run notebook logic_ops_train.ipynb
 
 # Inference
 python logic_ops_inference.py --device CPU
 python logic_ops_inference.py --device GPU
+```
+
+## DPU (Quantized)
+
+Requirements in the kv260 board:
+- Bitsream with DPU
+- Compiled model (sw/dpu/compiled_model/logic_net_dpu.xmodel)
+- Python file to interact with the DPU and run the inference (sw/dpu/logic_ops_inference_dpu.py)
+
+A bitstream with a DPU instantiated is required, and it must match the dpu target used in the compilation process (we’re targeting kv260 dpu used by vitis ai 3.5). 
+- Option 1: take bitbin, dtbo and json files from this repository (from output/artifacts or generate them). Then, copy them to the kv260 board, under /lib/firmware/xilinx/ and load them with xmutil
+- Option 2: take files .bit, .xclbin and .hwh can be taken from pynq-dpu repository: https://github.com/Xilinx/DPU-PYNQ/tree/master/pynq_dpu
+  - https://www.xilinx.com/bin/public/openDownload?filename=pynqdpu.dpu.kv260_som.3.5.0.bit
+  - https://www.xilinx.com/bin/public/openDownload?filename=pynqdpu.dpu.kv260_som.3.5.0.hwh
+  - https://www.xilinx.com/bin/public/openDownload?filename=pynqdpu.dpu.kv260_som.3.5.0.xclbin
+- Option 3. Install pynq on kv260 and copy dpu.bit/xclbin/hwh files from: `/usr/local/share/pynq-venv/lib/python3.10/site-packages/pynq_dpu/dpu.*`
+
+Note: files for options 2/3 can be found under `output\artifacts\pynqdpu.dpu.kv260_som.3.5.0` for convenience.
+
+For running the bitstream in the kv260 board:
+- Use xmutil to load the bitstream, dtbo and json files (option 1)
+```bash
+sudo xmutil unloadapp
+sudo xmutil loadapp dpu
+```
+- Use pynq overlay module to load the bit/xclbin/hwh files (option 2 or 3). Assuming they are in /home/ubuntu/:
+```python
+# Add this to your logic_ops_inference_dpu.py script
+from pynq import Overlay
+overlay = Overlay("dpu.bit")
+```
+
+Run the inference from the kv260:
+
+```bash
+sudo su
+export XLNX_VART_FIRMWARE=/home/ubuntu/dpu.xclbin
+source /etc/profile.d/pynq_venv.sh
+python3 logic_ops_inference_dpu.py
 ```
 
 # Results
@@ -128,3 +216,9 @@ Notes:
 | 512 | 100.00% | 2816.13 | 0.1818 | 0.1778 | 0.1805 | 0.1928 | 0.2004 | 0.4830 |
 | 2048 | 100.00% | 4526.54 | 0.4524 | 0.4372 | 0.4471 | 0.4770 | 0.5368 | 0.8139 |
 | 16384 | 100.00% | 7812.32 | 2.0972 | 2.0111 | 2.0888 | 2.1646 | 2.2927 | 12.4903 |
+
+## DPU (Quantized). KV260: DPU
+
+| Batch Size | Accuracy | Throughput (ksamp/s) | Latency Mean (ms) | Latency Min (ms) | Latency Median (ms) | Latency p95 (ms) | Latency p99 (ms) | Latency Max (ms) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | 100.00% | 3.96 | 0.2522 | 0.2464 | 0.2499 | 0.2647 | 0.3004 | 1.0190 |

@@ -1,0 +1,23 @@
+{
+  "param":
+  {
+    "LogicNet::net.0.weight":[[8,3]],
+    "LogicNet::net.0.bias":[[8,4]],
+    "LogicNet::net.2.weight":[[8,3]],
+    "LogicNet::net.2.bias":[[8,2]]
+  },
+  "output":
+  {
+    "LogicNet::nndct_input_0":[[8,6]],
+    "LogicNet::nndct_relu_2":[[8,3]],
+    "LogicNet::nndct_dense_3":[[8,-1]]
+  },
+  "input":
+  {
+
+  },
+  "fast_finetuned":false,
+  "bias_corrected":true,
+  "version":"3.5.0+60df3f1+torch1.13.1",
+  "graph_md5":"282ed5fbd30aa9eb21b1a4460f51397b"
+}
