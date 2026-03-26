@@ -1,31 +1,69 @@
 #ifndef TOP_HPP
 #define TOP_HPP
 
-typedef float nn_type_t;
+#include "ap_fixed.h"
 
+// Layer sizes
 constexpr unsigned INPUT_SIZE = 2;
-const nn_type_t input_scaler_mean[INPUT_SIZE] = {0.0, 0.0};
-const nn_type_t input_scaler_scale[INPUT_SIZE] = {1.0, 1.0};
-
 constexpr unsigned HIDDEN_SIZE = 8;
-const nn_type_t layer1_weights[HIDDEN_SIZE][INPUT_SIZE] = {
-    {-3.900935173034668, 0.05473707243800163},
-    {4.105870246887207, 7.455179214477539},
-    {0.5121998190879822, 7.130964756011963},
-    {4.917362213134766, 1.2807223796844482},
-    {0.3013811707496643, -0.10449212789535522},
-    {3.759112596511841, 2.6709506511688232},
-    {-5.668539524078369, 5.973025798797607},
-    {-0.8267287015914917, 0.29923954606056213}
-};
-const nn_type_t layer1_bias[HIDDEN_SIZE] = {3.6388611793518066, -4.105884075164795, -1.9024949073791504, 0.00101977470330894, -0.6447640061378479, -2.1858975887298584, -0.19797056913375854, -0.858839750289917};
-
 constexpr unsigned OUTPUT_SIZE = 3;
-const nn_type_t layer2_weights[OUTPUT_SIZE][HIDDEN_SIZE] = {
-    {-6.515682697296143, 2.4458045959472656, 6.064849376678467, -3.9016551971435547, -0.32345089316368103, 4.782142639160156, -5.2386794090271, 1.4556130170822144},
-    {-4.061453819274902, 8.128866195678711, 5.505801677703857, 1.0165475606918335, 0.30302414298057556, 10.259194374084473, 1.6157680749893188, 3.316796064376831},
-    {-3.9211199283599854, -3.3442742824554443, -2.11488676071167, 3.047232151031494, -0.0768839418888092, 0.44165951013565063, 8.768048286437988, -0.21105079352855682}
+
+// Toggle for Float vs Fixed-point (quantized)
+// #define USE_FLOAT
+
+#ifdef USE_FLOAT
+typedef float layer1_weight_t;
+typedef float layer1_bias_t;
+typedef float layer2_weight_t;
+typedef float layer2_bias_t;
+typedef float layer1_acc_t;
+typedef float layer1_act_t;
+typedef float layer2_acc_t;
+typedef float layer2_act_t;
+#else
+// Type definitions. ap_fixed<total_bits, integer_bits>
+typedef ap_fixed<8, 5> layer1_weight_t;
+typedef ap_fixed<8, 4> layer1_bias_t;
+typedef ap_fixed<8, 5> layer2_weight_t;
+typedef ap_fixed<8, 6> layer2_bias_t;
+
+// Intermediate types (wider to prevent overflow)
+typedef ap_fixed<17, 11> layer1_acc_t;
+typedef ap_fixed<17, 11> layer1_act_t;
+typedef ap_fixed<28, 19> layer2_acc_t;
+typedef ap_fixed<8, 2> layer2_act_t;
+#endif
+
+typedef layer1_weight_t input_t;
+typedef layer2_act_t output_t;
+
+// Weights and biases
+#ifdef USE_FLOAT
+const layer1_weight_t layer1_weights[HIDDEN_SIZE][INPUT_SIZE] = {
+    {-3.900935, 0.054737}, {4.105870, 7.455179}, {0.512199, 7.130964}, {4.917362, 1.280722},
+    {0.301381, -0.104492}, {3.759112, 2.670950}, {-5.668539, 5.973025}, {-0.826728, 0.299239}
 };
-const nn_type_t layer2_bias[OUTPUT_SIZE] = {-13.79601001739502, -3.2940595149993896, -0.8052051663398743};
+const layer1_bias_t layer1_bias[HIDDEN_SIZE] = {
+    3.638861, -4.105884, -1.902494, 0.001019, -0.644764, -2.185897, -0.197970, -0.858839
+};
+const layer2_weight_t layer2_weights[OUTPUT_SIZE][HIDDEN_SIZE] = {
+    {-6.515682, 2.445804, 6.064849, -3.901655, -0.323450, 4.782142, -5.238679, 1.455613},
+    {-4.061453, 8.128866, 5.505801, 1.016547, 0.303024, 10.259194, 1.615768, 3.316796},
+    {-3.921119, -3.344274, -2.114886, 3.047232, -0.076883, 0.441659, 8.768048, -0.211050}
+};
+const layer2_bias_t layer2_bias[OUTPUT_SIZE] = {-13.796010, -3.294059, -0.805205};
+#else
+const layer1_weight_t layer1_weights[HIDDEN_SIZE][INPUT_SIZE] = {
+    {-3.875,  0.0}, { 4.125,  7.5}, { 0.5,    7.125}, { 4.875,  1.25},
+    { 0.25,  -0.125}, { 3.75,   2.625}, {-5.625,  6.0}, {-0.875,  0.25}
+};
+const layer1_bias_t layer1_bias[HIDDEN_SIZE] = {3.625, -4.125, -1.875, 0.0, -0.625, -2.1875, -0.1875, -0.875};
+const layer2_weight_t layer2_weights[OUTPUT_SIZE][HIDDEN_SIZE] = {
+    {-6.5,   2.5,   6.125, -3.875, -0.375,  4.75,  -5.25,  1.5},
+    {-4.0,   8.125, 5.5,   1.0,    0.25,   10.25,   1.625,  3.375},
+    {-3.875,-3.375,-2.125,  3.0,  -0.125,   0.5,    8.75,  -0.25}
+};
+const layer2_bias_t layer2_bias[OUTPUT_SIZE] = {-13.75, -3.25, -0.75};
+#endif
 
 #endif // TOP_HPP
