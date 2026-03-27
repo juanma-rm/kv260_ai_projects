@@ -344,6 +344,101 @@ root@kria:/home/ubuntu/logic_ops/dpu_custom# source /etc/profile.d/pynq_venv.sh
 
 ```
 
+# Custom PL: Vitis HLS Kernel
+
+## References
+
+- [Vitis HLS User Guide (UG1399)](https://docs.amd.com/r/en-US/ug1399-vitis-hls)
+- [PYNQ Documentation](https://pynq.readthedocs.io/en/latest/)
+
+## Notes
+
+The `logic_ops_nn` kernel (`kernels/logic_ops_hls/`) implements the same MLP directly in Vitis HLS using fixed-point `ap_fixed` quantized arithmetic (configurable via `USE_FLOAT` macro in `top.hpp`). All computation is integer-based for maximum efficiency.
+
+**Kernel architecture:**
+- **Input:** 2 AXI-Lite scalar registers (a, b) as `ap_fixed<8,5>`
+- **Hidden layer:** 8 neurons with ReLU activation
+- **Output layer:** 3 neurons with Sigmoid activation → 3 AXI-Lite scalar output registers
+- **Quantization:** Layer1 weights/biases: `ap_fixed<8,5>` and `ap_fixed<8,4>`; Layer2 weights/biases: `ap_fixed<8,5>` and `ap_fixed<8,6>`; intermediate accumulators use wider types to prevent overflow
+- **Ports:** All exposed as AXI-Lite registers for straightforward read/write access via PYNQ
+
+For convenience, the generated artifacts are available in the repository:
+- `output/artifacts/hls/kv260_dpu.xclbin` — xclbin containing platform bitstream + `logic_ops_nn_1` kernel
+- `output/artifacts/hls/kv260_dpu.hwh` — post-link hardware description (required for PYNQ IP auto-discovery)
+
+You can use those files to run inference on the board directly. In that case, skip to "Transfer files to the KV260 and run inference".
+
+## Generate hardware artifacts
+
+Generate the xo file for the logic_ops_nn kernel using Vitis HLS:
+```bash
+cd kernels/logic_ops_hls
+source /path/to/Vitis/settings64.sh
+vitis-run --mode hls --tcl --input_file run_hls.tcl
+```
+
+The `run_hls.tcl` script:
+- Targets KV260 part (`xck26-sfvc784-2LV-c`) at 300 MHz (configurable)
+- Runs C simulation, synthesis, co-simulation, and exports the `.xo` kernel object
+- Aborts on test failure or timing violations
+
+### Synthesis & Implementation Results
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **Clock Period (Target)** | 3.333 ns (300 MHz) | User-configurable in `run_hls.tcl` |
+| **Clock Period (Estimated)** | 2.412 ns (414.59 MHz) | ✓ Passes timing constraint |
+| **Pipeline Latency** | 50 clock cycles | Total end-to-end |
+| **Timing Slack** | 0.02 ns | Comfortable margin |
+| **BRAM** | 4 (1% of KV260) | Layer2 buffering |
+| **DSP Slices** | 22 (1% of KV260) | MACs in Layer1 (4) & Layer2 (18) |
+| **Flip-Flops** | 9,063 (3% of KV260) | Dominated by sigmoid (exp function) |
+| **LUTs** | 7,944 (6% of KV260) | Dominated by sigmoid (exp function) |
+
+**Co-Simulation:** ✓ PASS – RTL matches C model; measured latency 52–67 cycles (avg 59).
+
+**Key Insight:** Sigmoid layer (with `hls::exp()`) dominates resource usage (89% FF, 80% LUT) due to fixed-point exponential expansion.
+
+Sigmoid is resource-heavy in fixed-point HLS and could be delegated to software instead (as done in the DPU implementation) for a more efficient hardware design. However, for this proof-of-concept, I keep it in HLS to demonstrate the full NN on PL.
+
+Generate the Vivado project, extensible XSA, Vitis platform and xclbin using the generated xo and our custom platform:
+```bash
+cd output
+
+# Edit output/build_vivado_proj.py to set the correct paths to your Vivado/Vitis installations and to the xo file generated in the previous step
+
+# Generate Vivado project, extensible XSA, Vitis platform, and XCLBIN (logic_ops_nn kernel linked in)
+python build_vivado_proj.py --dev-flow vitis_platform --jobs 4
+```
+
+The build produces:
+- `output/artifacts/kv260_dpu.xclbin` — xclbin with platform + kernel
+- `output/artifacts/kv260_dpu.hwh` — post-link HWH for PYNQ IP discovery
+- `output/artifacts/kv260_dpu.dtbo` / `output/artifacts/shell.json` — for xmutil (optional)
+
+## Transfer files to the KV260 and run inference
+
+From the host:
+
+```bash
+ssh kv260 "mkdir -p /home/ubuntu/logic_ops/hls"
+scp output/artifacts/kv260_dpu.xclbin  kv260:/home/ubuntu/logic_ops/hls/kv260_dpu.xclbin
+scp output/artifacts/kv260_dpu.hwh     kv260:/home/ubuntu/logic_ops/hls/kv260_dpu.hwh
+scp sw/hls/logic_ops_inference_hls.py  kv260:/home/ubuntu/logic_ops/hls/logic_ops_inference_hls.py
+```
+
+From the KV260, run inference using the PYNQ AXI-Lite register interface:
+
+```bash
+ubuntu@kria:~/logic_ops/hls$ ls
+kv260_dpu.hwh  kv260_dpu.xclbin  logic_ops_inference_hls.py
+ubuntu@kria:~/logic_ops/hls$ sudo su
+root@kria:/home/ubuntu/logic_ops/hls# source /etc/profile.d/pynq_venv.sh
+(pynq-venv) root@kria:/home/ubuntu/logic_ops/hls# python3 logic_ops_inference_hls.py
+
+@TODO
+```
+
 # Results
 
 Notes:
@@ -397,3 +492,8 @@ Notes:
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 1 | 100.00% | 4.03 | 0.2481 | 0.2349 | 0.2461 | 0.2608 | 0.2955 | 0.6850 |
 
+## Custom PL (Vitis HLS kernel). KV260: Custom PL
+
+| Batch Size | Accuracy | Throughput (ksamp/s) | Latency Mean (ms) | Latency Min (ms) | Latency Median (ms) | Latency p95 (ms) | Latency p99 (ms) | Latency Max (ms) | 
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | 100.00% | 9.31 | 0.1074 | 0.1041 | 0.1069 | 0.1083 | 0.1212 | 0.2359 |
