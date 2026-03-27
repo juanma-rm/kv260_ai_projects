@@ -1,0 +1,13 @@
+# Ignore everything
+*
+
+# Allow the directory structure (optional, but recommended for nested files)
+!*/
+
+# Exclude specific files from being ignored
+!/.gitignore
+!/top.cpp
+!/top.hpp
+!/top_tb.cpp
+!/logic_ops_nn.xo
+!/run_hls.tcl
