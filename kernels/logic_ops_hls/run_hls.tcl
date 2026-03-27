@@ -13,11 +13,12 @@
 # If tests fail in simulation/co-sim, the flow stops with a clear error.
 # ===========================================================================
 
-set project_name "logic_ops_nn"
-set top_function "logic_ops_nn"
-set part         "xck26-sfvc784-2LV-c"
-set clock_period 4
-set src_dir      [file dirname [info script]]
+set project_name  "logic_ops_nn"
+set top_function  "logic_ops_nn"
+set part          "xck26-sfvc784-2LV-c"
+set clock_freq_mhz 300
+set clock_period  [format "%.3f" [expr {1000.0 / $clock_freq_mhz}]]
+set src_dir       [file dirname [info script]]
 
 # ---------------------------------------------------------------------------
 # Parse optional stage argument (default: run all)
@@ -34,7 +35,8 @@ foreach arg $::argv {
 }
 
 puts "============================================================"
-puts " Stage: $stage | Part: $part | Clock: ${clock_period} ns"
+puts " Stage: $stage | Part: $part"
+puts " Clock: ${clock_freq_mhz} MHz (${clock_period} ns)"
 puts "============================================================"
 
 # ---------------------------------------------------------------------------
@@ -93,6 +95,30 @@ if { $stage eq "all" || $stage eq "synth" } {
     puts "\n>>> Running Synthesis..."
     csynth_design
     puts ">>> Synthesis complete."
+
+    # --- Timing check: abort if estimated period exceeds target ---
+    set xml_file "${project_name}/sol1/syn/report/csynth.xml"
+    if {[file exists $xml_file]} {
+        set fp [open $xml_file r]
+        set xml_content [read $fp]
+        close $fp
+        if {[regexp {<SummaryOfTimingAnalysis>.*?<EstimatedClockPeriod>([\d.]+)</EstimatedClockPeriod>} $xml_content -> estimated_period]} {
+            puts "  Target period:    ${clock_period} ns (${clock_freq_mhz} MHz)"
+            puts "  Estimated period: ${estimated_period} ns"
+            if {[expr {$estimated_period > $clock_period}]} {
+                puts "\n============================================================"
+                puts " ❌ ERROR: Timing FAILED"
+                puts "    Estimated ${estimated_period} ns > Target ${clock_period} ns"
+                puts "============================================================\n"
+                exit 1
+            }
+            puts "✓ Timing OK (${estimated_period} ns <= ${clock_period} ns)"
+        } else {
+            puts "  ⚠  Could not parse estimated clock period from $xml_file"
+        }
+    } else {
+        puts "  ⚠  Synthesis report not found: $xml_file"
+    }
 }
 
 # ---------------------------------------------------------------------------

@@ -81,26 +81,33 @@ class VivadoBuilder:
         # On Windows, Vivado binary could look like C:/AMD/2025.2/Vivado/bin/vivado.bat
         # On Linux, Vivado binary could look like /opt/Xilinx/Vivado/2025.2/bin/vivado    
 
-        vivado_root = "/home/juanma/Xilinx/2025.2/Vivado"
-        vitis_root = "/home/juanma/Xilinx/2025.2/Vitis"
+        self.VIVADO_ROOT = "/home/juanma/Xilinx/2025.2/Vivado"
+        self.VITIS_ROOT = "/home/juanma/Xilinx/2025.2/Vitis"
 
-        # Derive related tool paths from the installation roots so the script
-        # no longer asks for every individual tool path on the CLI.
-        self.VIVADO_PATH = f"{vivado_root}/bin/vivado"
-        self.VITIS_PATH = f"{vitis_root}/bin/vitis"
-        self.BOOTGEN_PATH = f"{vivado_root}/bin/bootgen"
-        self.DTC_PATH = f"{vitis_root}/bin/dtc"
-        self.V_PP_PATH = f"{vitis_root}/bin/v++"
-        self.XSCT_PATH = f"{vitis_root}/bin/xsct"
+        # Detect environment and set paths
+        self.script_path = pathlib.Path(__file__).resolve()
+        self.workspace_path = self.script_path.parent.parent
+        self.is_windows = platform.system() == "Windows"
+        
+        # Adjust tool extensions for Windows
+        vivado_exe = "vivado.bat" if self.is_windows else "vivado"
+        vitis_exe = "vitis.bat" if self.is_windows else "vitis"
+        bootgen_exe = "bootgen.bat" if self.is_windows else "bootgen"
+        dtc_exe = "dtc.bat" if self.is_windows else "dtc"
+        v_exe = "v++.bat" if self.is_windows else "v++"
+        xsct_exe = "xsct.bat" if self.is_windows else "xsct"
+        
+        self.VIVADO_PATH = f"{self.VIVADO_ROOT}/bin/{vivado_exe}"
+        self.VITIS_PATH = f"{self.VITIS_ROOT}/bin/{vitis_exe}"
+        self.BOOTGEN_PATH = f"{self.VIVADO_ROOT}/bin/{bootgen_exe}"
+        self.DTC_PATH = f"{self.VITIS_ROOT}/bin/{dtc_exe}"
+        self.V_PP_PATH = f"{self.VITIS_ROOT}/bin/{v_exe}"
+        self.XSCT_PATH = f"{self.VITIS_ROOT}/bin/{xsct_exe}"
         self.REUSE = False
         
         # Strategies for synthesis and implementation
         self.SYNTH_STRATEGY = "Flow_AreaOptimized_high"
         self.IMPL_STRATEGY = "Area_Explore"
-        
-        # Detect environment and set paths
-        self.script_path = pathlib.Path(__file__).resolve()
-        self.workspace_path = self.script_path.parent.parent
         
         # Convert to forward slashes for TCL compatibility
         self.workspace_path_str = str(self.workspace_path).replace('\\', '/')
@@ -133,9 +140,9 @@ class VivadoBuilder:
         
         # Platform and kernel files
         self.pfm_tcl_path = self.workspace_path / "common" / "pfm.tcl"
-        self.kernel_name = "my_ip"
+        self.kernel_name = "logic_ops_nn"
         self.kernel_src_path = self.workspace_path / "kernels"
-        self.link_input_path = self.workspace_path / "kernels" / "my_ip.xo"
+        self.link_input_path = self.workspace_path / "kernels" / "logic_ops_hls" / "logic_ops_nn.xo"
         
         print(f"Workspace path: {self.workspace_path_str}")
         print(f"Development flow: {self.DEV_FLOW}")
@@ -206,7 +213,9 @@ class VivadoBuilder:
 
     def run_vitis_script(self, py_script: str, working_dir: Optional[pathlib.Path] = None) -> bool:
         """Run Vitis with a Python script"""
-        cmd = [self.VITIS_PATH, "-s", py_script]
+        # Convert path to native format on Windows
+        vitis_path = self.VITIS_PATH.replace('/', '\\') if self.is_windows else self.VITIS_PATH
+        cmd = [vitis_path, "-s", py_script]
         
         if working_dir:
             original_cwd = os.getcwd()
@@ -227,7 +236,9 @@ class VivadoBuilder:
 
     def run_vivado(self, tcl_script: str, working_dir: Optional[pathlib.Path] = None) -> bool:
         """Run Vivado with a TCL script"""
-        cmd = [self.VIVADO_PATH, "-nojournal", "-nolog", "-mode", "batch", "-source", tcl_script]
+        # Convert path to native format on Windows
+        vivado_path = self.VIVADO_PATH.replace('/', '\\') if self.is_windows else self.VIVADO_PATH
+        cmd = [vivado_path, "-nojournal", "-nolog", "-mode", "batch", "-source", tcl_script]
         
         if working_dir:
             original_cwd = os.getcwd()
@@ -332,7 +343,9 @@ class VivadoBuilder:
                 print(f"Error: Project file {xpr_file} not found. Create project first.")
                 return False
             
-            cmd = [self.VIVADO_PATH, str(xpr_file)]
+            # Convert path to native format on Windows
+            vivado_path = self.VIVADO_PATH.replace('/', '\\') if self.is_windows else self.VIVADO_PATH
+            cmd = [vivado_path, str(xpr_file)]
             print(f"Executing: {' '.join(cmd)}")
             
             # For GUI, we don't want to capture output
@@ -619,6 +632,13 @@ class VivadoBuilder:
                 # Create marker file in vivado directory
                 marker_file = self.vivado_path / "xsa_ext"
                 marker_file.touch()
+                # Copy HWH to artifacts (needed for PYNQ/DPU tools)
+                hwh_source = (self.vivado_path / f"{self.PROJECT_NAME}.gen" / "sources_1"
+                              / "bd" / self.BD_TOP / "hw_handoff" / f"{self.BD_TOP}.hwh")
+                if hwh_source.exists():
+                    hwh_dest = self.artifacts_path / f"{self.BD_TOP}.hwh"
+                    shutil.copy2(hwh_source, hwh_dest)
+                    print(f"Copied HWH to: {hwh_dest}")
             
             return success
             
@@ -651,7 +671,8 @@ class VivadoBuilder:
                 f.write(bif_content)
             
             # Run bootgen
-            cmd = [self.BOOTGEN_PATH, "-w", "-arch", "zynqmp", "-process_bitstream", "bin", "-image", "bootgen.bif"]
+            bootgen_path = self.BOOTGEN_PATH.replace('/', '\\') if self.is_windows else self.BOOTGEN_PATH
+            cmd = [bootgen_path, "-w", "-arch", "zynqmp", "-process_bitstream", "bin", "-image", "bootgen.bif"]
             print(f"Executing: {' '.join(cmd)}")
             
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -815,7 +836,8 @@ class VivadoBuilder:
             # 3. Manually compile the artifact version
             print(f"Compiling edited DTSI from artifacts: {dtsi_artifact}")
             dtbo_out = self.artifacts_path / f"{self.PROJECT_NAME}.dtbo"
-            cmd = [self.DTC_PATH, "-@", "-O", "dtb", "-o", str(dtbo_out), str(dtsi_artifact)]
+            dtc_path = self.DTC_PATH.replace('/', '\\') if self.is_windows else self.DTC_PATH
+            cmd = [dtc_path, "-@", "-O", "dtb", "-o", str(dtbo_out), str(dtsi_artifact)]
             
             subprocess.run(cmd, check=True)
             print(f"Successfully generated manually edited DTBO at: {dtbo_out}")
@@ -888,7 +910,8 @@ class VivadoBuilder:
             tcl_file = self.xpfm_path / "create_platform.tcl"
             tcl_file.write_text(tcl_content)
             
-            cmd = [self.XSCT_PATH, str(tcl_file)]
+            xsct_path = self.XSCT_PATH.replace('/', '\\') if self.is_windows else self.XSCT_PATH
+            cmd = [xsct_path, str(tcl_file)]
             
             print(f"Executing: {' '.join(cmd)}")
             result = subprocess.run(cmd, cwd=str(self.xpfm_path), text=True)
@@ -913,55 +936,89 @@ class VivadoBuilder:
             return False
 
     def generate_xclbin(self) -> bool:
-        # Change to xpfm dir to contain v++ intermediate logs and files
-        original_cwd = os.getcwd()
-        os.chdir(self.xpfm_path)
-        
-        temp_dir = self.xpfm_path / "temp"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        
-        # XPFM file should be at the known location
-        xpfm_file = self.xpfm_path / f"{self.PROJECT_NAME}.xpfm"
+        """Link kernel .xo with the Vitis platform using v++ to produce an XCLBIN."""
+        xclbin_dest = self.artifacts_path / f"{self.PROJECT_NAME}.xclbin"
+
+        if self.REUSE and xclbin_dest.exists():
+            print(f"Reusing existing xclbin: {xclbin_dest}")
+            # Ensure the post-link HWH is also in artifacts (may have been missed on a previous run)
+            hwh_dest = self.artifacts_path / f"{self.PROJECT_NAME}.hwh"
+            if not hwh_dest.exists():
+                post_link_hwh = (self.xpfm_path / "temp" / "link" / "vivado" / "vpl" / "prj"
+                                 / "prj.gen" / "sources_1" / "bd" / self.BD_TOP
+                                 / "hw_handoff" / f"{self.BD_TOP}.hwh")
+                if post_link_hwh.exists():
+                    shutil.copy2(post_link_hwh, hwh_dest)
+                    print(f"Copied post-link HWH to: {hwh_dest}")
+                else:
+                    print(f"Warning: post-link HWH not found at {post_link_hwh}")
+            return True
+
+        print("\n" + "="*60)
+        print("Generating XCLBIN (v++ link)...")
+        print("="*60 + "\n")
+
+        # XPFM path matches what generate_xpfm creates via xsct
+        xpfm_file = (self.xpfm_path
+                     / f"{self.PROJECT_NAME}_vitis_platform"
+                     / "export"
+                     / f"{self.PROJECT_NAME}_vitis_platform"
+                     / f"{self.PROJECT_NAME}_vitis_platform.xpfm")
         if not xpfm_file.exists():
             print(f"Error: XPFM file not found at {xpfm_file}. Run xpfm target first.")
-            os.chdir(original_cwd)
             return False
-        
-        xclbin_file = self.xpfm_path / f"{self.PROJECT_NAME}.xclbin"
-        bitbin_dest = self.artifacts_path / f"{self.PROJECT_NAME}.bit.bin"
 
-        # Respect reuse flag: if artifact already exists, skip generation
-        if self.REUSE and bitbin_dest.exists():
-            print(f"Reusing existing xclbin/bitbin artifact: {bitbin_dest}")
-            # Ensure we restore cwd before returning
-            os.chdir(original_cwd)
-            return True
-        
+        if not self.link_input_path.exists():
+            print(f"Error: Kernel XO file not found at {self.link_input_path}.")
+            return False
+
+        original_cwd = os.getcwd()
+        os.chdir(self.xpfm_path)
+
+        temp_dir = self.xpfm_path / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        xclbin_out = self.xpfm_path / f"{self.PROJECT_NAME}.xclbin"
+
+        # v++ -l (link): no --kernel flag; kernels come from the .xo input files
+        v_path = self.V_PP_PATH.replace('/', '\\') if self.is_windows else self.V_PP_PATH
         cmd = [
-            self.V_PP_PATH, "-l", "--save-temps", "-t", "hw",
-            "--platform", str(xpfm_file),
-            "-k", self.kernel_name,
+            v_path, "-l", "--save-temps", "-t", "hw",
+            "--platform", xpfm_file.as_posix().replace('\\', '/'),
             "--temp_dir", str(temp_dir),
-            "-o", str(xclbin_file),
-            "-I", str(self.kernel_src_path),
+            "-o", str(xclbin_out),
             str(self.link_input_path)
         ]
-        
-        # v++/system_link expects the Vivado install root
+
         env = os.environ.copy()
-        env["XILINX_VIVADO"] = _tool_install_root(self.VIVADO_PATH)
+        env["XILINX_VIVADO"] = self.VIVADO_ROOT
 
         try:
-            # Run v++
-            if subprocess.run(cmd, env=env).returncode == 0:
-                # Rename the .xclbin to .bit.bin and move it to artifacts
-                import shutil
-                shutil.move(str(xclbin_file), str(bitbin_dest))
-                print(f"Successfully generated {bitbin_dest}")
+            print(f"Executing: {' '.join(cmd)}")
+            result = subprocess.run(cmd, env=env)
+            if result.returncode == 0:
+                shutil.copy2(xclbin_out, xclbin_dest)
+                print(f"Successfully generated {xclbin_dest}")
+
+                # Copy the post-link HWH (contains kernel IPs) to artifacts so that
+                # PYNQ can auto-discover IP instances (e.g. logic_ops_nn_1).
+                # Named to match the xclbin so Overlay() finds it automatically.
+                post_link_hwh = (temp_dir / "link" / "vivado" / "vpl" / "prj"
+                                 / "prj.gen" / "sources_1" / "bd" / self.BD_TOP
+                                 / "hw_handoff" / f"{self.BD_TOP}.hwh")
+                if post_link_hwh.exists():
+                    hwh_dest = self.artifacts_path / f"{self.PROJECT_NAME}.hwh"
+                    shutil.copy2(post_link_hwh, hwh_dest)
+                    print(f"Copied post-link HWH to: {hwh_dest}")
+                else:
+                    print(f"Warning: post-link HWH not found at {post_link_hwh}")
+
                 return True
+            print(f"v++ link failed with return code {result.returncode}")
+            return False
+        except FileNotFoundError:
+            print("Error: v++ command not found. Make sure Vitis is installed and in PATH.")
             return False
         finally:
-            # Always revert to original working directory
             os.chdir(original_cwd)
 
     def build_target(self, target: str, _directories_created: bool = False) -> bool:
@@ -1005,9 +1062,10 @@ class VivadoBuilder:
             return self.generate_xsa_non_extensible()
         
         elif target == "xsa_extensible":
-            # Need project created first
-            if not self.create_project():
-                return False
+            # Requires synthesis and implementation before write_hw_platform -hw
+            if not self.create_project(): return False
+            if not self.run_synthesis(): return False
+            if not self.run_implementation(): return False
             return self.generate_xsa_extensible()
         
         elif target == "bitbin":
@@ -1047,7 +1105,11 @@ class VivadoBuilder:
                 if not self.generate_dtbo(): return False
                 return self.copy_shell_json()
             elif self.DEV_FLOW == "vitis_platform":
-                if not self.build_target("bit", _directories_created=True): return False
+                # Synth+impl needed before extensible XSA; bitstream is produced
+                # by v++ link (inside the XCLBIN), not separately by Vivado.
+                if not self.create_project(): return False
+                if not self.run_synthesis(): return False
+                if not self.run_implementation(): return False
                 if not self.generate_xsa_extensible(): return False
                 if not self.generate_xpfm(): return False
                 if not self.generate_xclbin(): return False

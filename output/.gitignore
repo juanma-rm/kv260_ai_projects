@@ -1,6 +1,7 @@
 /artifacts/*
 !/artifacts/pynqdpu.dpu.kv260_som.3.5.0/
 !/artifacts/dpu_custom/
+!/artifacts/hls/
 /dtbo
 /vitis
 /vivado
